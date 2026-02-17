@@ -48,7 +48,7 @@ pipeline {
                     passwordVariable: 'RABBITMQ_PASS'
                 )]) {
                     sh """
-                    python3 ci/publish_to_rabbitmq.py scan_job.json
+                    python3 publish_job.py scan_job.json
                     """
                 }
             }
