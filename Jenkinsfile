@@ -64,7 +64,7 @@
 //         }
 //     }
 // }
-// -----------------------------------------------------------------------------------------------------------
+// ----------------------------------------------------Jenkins -> SAST Agent -> RabbitMQ -------------------------------------------------------
 
 // pipeline {
 //     agent {
@@ -141,8 +141,56 @@
 //     }
 // }
 // ---------------------------------------------------------------------------------------Jenkins-> ARMOR-> RabbitMQ -----------------------------------------
+// pipeline {
+//     agent any
+
+//     stages {
+
+//         stage('Checkout') {
+//             steps {
+//                 checkout scm
+//             }
+//         }
+
+//         stage('Trigger SAST via ARMOR API') {
+//             steps {
+//                 script {
+//                     def repoUrl = env.GIT_URL
+//                     def branch = env.GIT_BRANCH.replace("origin/", "")
+
+//                     sh """
+//                     curl -X POST http://host.docker.internal:8000/api/v2/sast/trigger \
+//                     -H "Content-Type: application/json" \
+//                     -d '{
+//                         "repo_url": "${repoUrl}",
+//                         "branch": "${branch}"
+//                     }'
+//                     """
+//                 }
+//             }
+//         }
+//     }
+
+//     post {
+//         success {
+//             echo "SAST trigger request sent to ARMOR"
+//         }
+//         failure {
+//             echo "Failed to trigger SAST via ARMOR"
+//         }
+//     }
+// }
+// ---------------------------------------------------------Jenkins-> SAST Agent....No RabbitMQ------------------------------------------------------------
+
 pipeline {
     agent any
+
+    environment {
+        GITHUB_TOKEN = credentials('github-token')
+        MINIO_ENDPOINT = "http://host.docker.internal:9000"
+        MINIO_ACCESS_KEY = credentials('minio-access-key')
+        MINIO_SECRET_KEY = credentials('minio-secret-key')
+    }
 
     stages {
 
@@ -152,19 +200,30 @@ pipeline {
             }
         }
 
-        stage('Trigger SAST via ARMOR API') {
+        stage('Build SAST Agent Image') {
+            steps {
+                sh '''
+                docker build -t sast-agent:latest ./agent
+                '''
+            }
+        }
+
+        stage('Run SAST Scan') {
             steps {
                 script {
-                    def repoUrl = env.GIT_URL
+                    def jobId = UUID.randomUUID().toString()
                     def branch = env.GIT_BRANCH.replace("origin/", "")
 
                     sh """
-                    curl -X POST http://host.docker.internal:8000/api/v2/sast/trigger \
-                    -H "Content-Type: application/json" \
-                    -d '{
-                        "repo_url": "${repoUrl}",
-                        "branch": "${branch}"
-                    }'
+                    docker run --rm \
+                        -e JOB_ID=${jobId} \
+                        -e REPO_URL=${env.GIT_URL} \
+                        -e BRANCH=${branch} \
+                        -e GITHUB_TOKEN=${GITHUB_TOKEN} \
+                        -e MINIO_ENDPOINT=${MINIO_ENDPOINT} \
+                        -e MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY} \
+                        -e MINIO_SECRET_KEY=${MINIO_SECRET_KEY} \
+                        sast-agent:latest
                     """
                 }
             }
@@ -173,10 +232,10 @@ pipeline {
 
     post {
         success {
-            echo "SAST trigger request sent to ARMOR"
+            echo "SAST scan completed successfully"
         }
         failure {
-            echo "Failed to trigger SAST via ARMOR"
+            echo "SAST scan failed"
         }
     }
 }
